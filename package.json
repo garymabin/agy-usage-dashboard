@@ -1,0 +1,25 @@
+{
+  "name": "agy-usage-dashboard",
+  "version": "1.0.0",
+  "description": "Local Antigravity usage analytics MCP App plugin for the main panel and side pane.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/garymabin/agy-usage-dashboard.git"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}
