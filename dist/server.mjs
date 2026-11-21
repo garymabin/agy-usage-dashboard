@@ -14369,14 +14369,141 @@ var StdioServerTransport = class {
 };
 
 // ../../../../.gemini/antigravity/scratch/agy-usage-dashboard/src/server.mjs
-import { existsSync as existsSync2, readFileSync as readFileSync2 } from "node:fs";
-import { dirname as dirname2, join as join2 } from "node:path";
+import { existsSync as existsSync3, readFileSync as readFileSync2 } from "node:fs";
+import { dirname as dirname2, join as join3 } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// ../../../../.gemini/antigravity/scratch/agy-usage-dashboard/src/usage.mjs
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+// ../../../../.gemini/antigravity/scratch/agy-usage-dashboard/src/quota.mjs
+import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
+import { promisify } from "node:util";
+var execFileAsync = promisify(execFile);
+var cachedQuota = null;
+function getCachedQuota() {
+  return cachedQuota;
+}
+function findAgyBinary() {
+  const candidates = [];
+  if (process.platform === "win32") {
+    const localAppData = process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local");
+    candidates.push(join(localAppData, "agy", "bin", "agy.exe"));
+    candidates.push("agy.exe");
+    candidates.push("agy");
+  } else {
+    candidates.push(join(homedir(), ".local", "bin", "agy"));
+    candidates.push("/usr/local/bin/agy");
+    candidates.push("/opt/homebrew/bin/agy");
+    candidates.push("agy");
+  }
+  for (const c of candidates) {
+    if (c.includes("/") || c.includes("\\")) {
+      if (existsSync(c)) return c;
+    } else {
+      return c;
+    }
+  }
+  return "agy";
+}
+function parseQuotaJson(stdout) {
+  const trimmed = String(stdout || "").trim();
+  if (!trimmed) {
+    throw new Error("Empty output from agy CLI.");
+  }
+  const firstBrace = trimmed.indexOf("{");
+  const lastBrace = trimmed.lastIndexOf("}");
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace < firstBrace) {
+    throw new Error("Unexpected non-JSON output from agy CLI.");
+  }
+  const parsed = JSON.parse(trimmed.slice(firstBrace, lastBrace + 1));
+  if (parsed.status && parsed.status !== "SUCCESS") {
+    throw new Error(parsed.response || `agy returned status ${parsed.status}`);
+  }
+  const data = parsed?.command?.data;
+  if (!data || !Array.isArray(data.groups)) {
+    throw new Error("Quota data missing from agy /usage response.");
+  }
+  const groups = data.groups.map((g) => ({
+    name: g.name || "Model Group",
+    description: g.description || "",
+    buckets: (g.buckets || []).map((b) => {
+      const remainingFraction = Math.max(0, Math.min(1, Number(b.remaining_fraction ?? 0)));
+      const remainingPct = Math.round(remainingFraction * 1e3) / 10;
+      const usedPct = Math.round((1 - remainingFraction) * 1e3) / 10;
+      return {
+        id: b.id || "",
+        name: b.name || (b.window === "5h" ? "5-Hour Limit" : "Weekly Limit"),
+        window: b.window || "",
+        description: b.description || "",
+        remainingFraction,
+        remainingPct,
+        usedPct,
+        resetTime: b.reset_time || ""
+      };
+    })
+  }));
+  return {
+    ok: true,
+    fetchedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    description: data.description || "",
+    groups
+  };
+}
+async function fetchLiveQuota() {
+  const bin = findAgyBinary();
+  try {
+    const { stdout } = await execFileAsync(
+      bin,
+      ["--print", "/usage", "--output-format", "json", "--print-timeout", "15s"],
+      {
+        timeout: 2e4,
+        maxBuffer: 1024 * 1024,
+        windowsHide: true
+      }
+    );
+    const result = parseQuotaJson(stdout);
+    cachedQuota = result;
+    return result;
+  } catch (err) {
+    const code = err?.code;
+    if (code === "ENOENT") {
+      return {
+        ok: false,
+        fetchedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        error: "Antigravity CLI (agy) was not found on PATH.",
+        hint: "Install the official Antigravity CLI (agy) so this button can run `agy --print /usage --output-format json`."
+      };
+    }
+    const stderr = typeof err?.stderr === "string" ? err.stderr.trim() : "";
+    return {
+      ok: false,
+      fetchedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      error: stderr || err?.message || "Failed to query quota via agy CLI.",
+      hint: "Make sure you are signed in to `agy` CLI, or check Settings \u2192 Models."
+    };
+  }
+}
+function formatQuotaTextSummary(quota) {
+  if (!quota?.ok) {
+    return `Unable to fetch live quota: ${quota?.error || "Unknown error"}${quota?.hint ? `
+${quota.hint}` : ""}`;
+  }
+  const lines = ["Antigravity Live Account Quota (via `agy --print /usage`):"];
+  for (const g of quota.groups) {
+    lines.push(`- ${g.name}:`);
+    for (const b of g.buckets) {
+      const label = b.window === "5h" ? "5-Hour" : b.window === "weekly" ? "Weekly" : b.name;
+      lines.push(`  * ${label}: ${b.usedPct}% used (${b.remainingPct}% remaining)${b.resetTime ? ` \xB7 resets ${b.resetTime}` : ""}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+// ../../../../.gemini/antigravity/scratch/agy-usage-dashboard/src/usage.mjs
+import { existsSync as existsSync2, readdirSync, readFileSync, statSync } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { dirname, join as join2 } from "node:path";
 var transcriptCache = /* @__PURE__ */ new Map();
 var sqliteLoader;
 async function getDatabaseSync() {
@@ -14390,21 +14517,21 @@ function discoverDataDirs() {
   const envDir = process.env.ANTIGRAVITY_EXECUTABLE_DATA_DIR;
   if (envDir) {
     for (let d = envDir; d !== dirname(d); d = dirname(d)) {
-      if (existsSync(join(d, "brain"))) {
+      if (existsSync2(join2(d, "brain"))) {
         dirs.add(d);
         break;
       }
     }
   }
-  const geminiRoot = join(homedir(), ".gemini");
-  if (existsSync(geminiRoot)) {
-    const primary = join(geminiRoot, "antigravity");
-    if (existsSync(primary)) dirs.add(primary);
+  const geminiRoot = join2(homedir2(), ".gemini");
+  if (existsSync2(geminiRoot)) {
+    const primary = join2(geminiRoot, "antigravity");
+    if (existsSync2(primary)) dirs.add(primary);
     try {
       for (const entry of readdirSync(geminiRoot, { withFileTypes: true })) {
         if (!entry.isDirectory()) continue;
-        const candidate = join(geminiRoot, entry.name);
-        if (existsSync(join(candidate, "brain")) || existsSync(join(candidate, "conversation_summaries.db"))) {
+        const candidate = join2(geminiRoot, entry.name);
+        if (existsSync2(join2(candidate, "brain")) || existsSync2(join2(candidate, "conversation_summaries.db"))) {
           dirs.add(candidate);
         }
       }
@@ -14446,8 +14573,8 @@ async function loadConversationSummaries(dataDirs) {
     return { byId, dbFound: false };
   }
   for (const dir of dataDirs) {
-    const dbPath = join(dir, "conversation_summaries.db");
-    if (!existsSync(dbPath)) continue;
+    const dbPath = join2(dir, "conversation_summaries.db");
+    if (!existsSync2(dbPath)) continue;
     let db;
     try {
       db = new DatabaseSync(dbPath, { readOnly: true });
@@ -14569,8 +14696,8 @@ function loadAllTranscripts(dataDirs) {
   let transcriptFilesCount = 0;
   const seenFiles = /* @__PURE__ */ new Set();
   for (const dir of dataDirs) {
-    const brainDir = join(dir, "brain");
-    if (!existsSync(brainDir)) continue;
+    const brainDir = join2(dir, "brain");
+    if (!existsSync2(brainDir)) continue;
     let entries;
     try {
       entries = readdirSync(brainDir, { withFileTypes: true });
@@ -14580,8 +14707,8 @@ function loadAllTranscripts(dataDirs) {
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const convId = entry.name;
-      const transcriptPath = join(brainDir, convId, ".system_generated", "logs", "transcript.jsonl");
-      if (seenFiles.has(transcriptPath) || !existsSync(transcriptPath)) continue;
+      const transcriptPath = join2(brainDir, convId, ".system_generated", "logs", "transcript.jsonl");
+      if (seenFiles.has(transcriptPath) || !existsSync2(transcriptPath)) continue;
       seenFiles.add(transcriptPath);
       const turns = parseTranscriptFile(transcriptPath, convId);
       if (turns && turns.length > 0) {
@@ -14944,17 +15071,17 @@ var __dirname = dirname2(fileURLToPath(import.meta.url));
 var APP_URI = "ui://usage-dashboard/app.html";
 var APP_MIME = "text/html;profile=mcp-app";
 function resolveAppHtmlPath() {
-  if (process.env.USAGE_DASHBOARD_APP_HTML && existsSync2(process.env.USAGE_DASHBOARD_APP_HTML)) {
+  if (process.env.USAGE_DASHBOARD_APP_HTML && existsSync3(process.env.USAGE_DASHBOARD_APP_HTML)) {
     return process.env.USAGE_DASHBOARD_APP_HTML;
   }
-  const sibling = join2(__dirname, "app.html");
-  if (existsSync2(sibling)) return sibling;
-  return join2(dirname2(__dirname), "dist", "app.html");
+  const sibling = join3(__dirname, "app.html");
+  if (existsSync3(sibling)) return sibling;
+  return join3(dirname2(__dirname), "dist", "app.html");
 }
 var server = new Server(
   {
     name: "agy-usage-dashboard",
-    version: "1.0.0"
+    version: "1.1.0"
   },
   {
     capabilities: {
@@ -14968,7 +15095,7 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => ({
     {
       uri: APP_URI,
       name: "Antigravity Usage Dashboard",
-      description: "Interactive local token, KV-cache, model, tool, and conversation usage dashboard.",
+      description: "Interactive local token, KV-cache, model, tool, conversation, and live quota dashboard.",
       mimeType: APP_MIME,
       _meta: {
         ui: {
@@ -15004,7 +15131,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "open_usage_dashboard",
       title: "Usage",
-      description: "Open the interactive Antigravity Usage Dashboard showing local token consumption, KV-cache hit rate, model breakdown, daily/hourly charts, top tools, and per-conversation telemetry.",
+      description: "Open the interactive Antigravity Usage Dashboard showing local token consumption, KV-cache hit rate, model breakdown, daily/hourly charts, top tools, per-conversation telemetry, and an on-demand Live Quota check.",
       inputSchema: {
         type: "object",
         properties: {
@@ -15058,6 +15185,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       }
     },
     {
+      name: "get_live_quota",
+      title: "Check Live Quota",
+      description: "Run the official local Antigravity CLI (`agy --print /usage --output-format json`) with zero tokens consumed to fetch current 5-hour and weekly model quota usage percentages and reset times.",
+      inputSchema: {
+        type: "object",
+        properties: {}
+      }
+    },
+    {
       name: "get_usage_summary",
       title: "Get Usage Summary",
       description: "Return a text summary of local Antigravity token usage, KV-cache hit rate, model breakdown, and historical session counts.",
@@ -15091,10 +15227,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       workspace: args?.workspace || "all",
       search: args?.search || ""
     });
+    const quota = getCachedQuota();
+    if (quota) {
+      data.quota = quota;
+    }
     const text = formatUsageTextSummary(data);
     return {
       content: [{ type: "text", text }],
       structuredContent: data
+    };
+  }
+  if (name === "get_live_quota") {
+    const quota = await fetchLiveQuota();
+    return {
+      content: [{ type: "text", text: formatQuotaTextSummary(quota) }],
+      structuredContent: quota
     };
   }
   if (name === "get_usage_summary") {

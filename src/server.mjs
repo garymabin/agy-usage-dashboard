@@ -9,6 +9,7 @@ import {
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fetchLiveQuota, formatQuotaTextSummary, getCachedQuota } from './quota.mjs';
 import { collectUsageAnalytics, formatUsageTextSummary } from './usage.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -27,7 +28,7 @@ function resolveAppHtmlPath() {
 const server = new Server(
   {
     name: 'agy-usage-dashboard',
-    version: '1.0.0',
+    version: '1.1.0',
   },
   {
     capabilities: {
@@ -42,7 +43,7 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => ({
     {
       uri: APP_URI,
       name: 'Antigravity Usage Dashboard',
-      description: 'Interactive local token, KV-cache, model, tool, and conversation usage dashboard.',
+      description: 'Interactive local token, KV-cache, model, tool, conversation, and live quota dashboard.',
       mimeType: APP_MIME,
       _meta: {
         ui: {
@@ -81,7 +82,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       name: 'open_usage_dashboard',
       title: 'Usage',
       description:
-        'Open the interactive Antigravity Usage Dashboard showing local token consumption, KV-cache hit rate, model breakdown, daily/hourly charts, top tools, and per-conversation telemetry.',
+        'Open the interactive Antigravity Usage Dashboard showing local token consumption, KV-cache hit rate, model breakdown, daily/hourly charts, top tools, per-conversation telemetry, and an on-demand Live Quota check.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -135,6 +136,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'get_live_quota',
+      title: 'Check Live Quota',
+      description:
+        'Run the official local Antigravity CLI (`agy --print /usage --output-format json`) with zero tokens consumed to fetch current 5-hour and weekly model quota usage percentages and reset times.',
+      inputSchema: {
+        type: 'object',
+        properties: {},
+      },
+    },
+    {
       name: 'get_usage_summary',
       title: 'Get Usage Summary',
       description:
@@ -171,10 +182,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       workspace: args?.workspace || 'all',
       search: args?.search || '',
     });
+    const quota = getCachedQuota();
+    if (quota) {
+      data.quota = quota;
+    }
     const text = formatUsageTextSummary(data);
     return {
       content: [{ type: 'text', text }],
       structuredContent: data,
+    };
+  }
+
+  if (name === 'get_live_quota') {
+    const quota = await fetchLiveQuota();
+    return {
+      content: [{ type: 'text', text: formatQuotaTextSummary(quota) }],
+      structuredContent: quota,
     };
   }
 

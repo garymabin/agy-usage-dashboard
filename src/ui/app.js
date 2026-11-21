@@ -17,6 +17,8 @@ const MODEL_COLORS = [
 
 const state = {
   data: null,
+  quota: null,
+  quotaLoading: false,
   loading: true,
   error: null,
   range: '30d',
@@ -54,6 +56,33 @@ function fmtRelativeTime(iso) {
   const days = Math.floor(hrs / 24);
   if (days < 30) return `${days}d ago`;
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function fmtResetCountdown(iso) {
+  if (!iso) return '';
+  const target = Date.parse(iso);
+  if (Number.isNaN(target)) return '';
+  const diffMs = target - Date.now();
+  if (diffMs <= 0) return 'Refreshing soon';
+  const totalMins = Math.floor(diffMs / 60000);
+  const days = Math.floor(totalMins / (60 * 24));
+  const hours = Math.floor((totalMins % (60 * 24)) / 60);
+  const mins = totalMins % 60;
+  if (days > 0) return `Resets in ${days}d ${hours}h`;
+  if (hours > 0) return `Resets in ${hours}h ${mins}m`;
+  return `Resets in ${mins}m`;
+}
+
+function quotaFillColor(usedPct) {
+  if (usedPct >= 85) return 'var(--c-danger)';
+  if (usedPct >= 60) return 'var(--c-warn)';
+  return 'var(--c-cache)';
+}
+
+function quotaBadgeClass(usedPct) {
+  if (usedPct >= 85) return 'badge-low';
+  if (usedPct >= 60) return 'badge-mid';
+  return 'badge-good';
 }
 
 function escapeHtml(str) {
@@ -107,6 +136,9 @@ async function fetchUsage() {
     });
     if (result?.structuredContent) {
       state.data = result.structuredContent;
+      if (state.data.quota && !state.quota) {
+        state.quota = state.data.quota;
+      }
       syncFiltersFromData(state.data);
     } else if (result?.isError) {
       state.error = result.content?.[0]?.text || 'Failed to load usage telemetry.';
@@ -117,6 +149,142 @@ async function fetchUsage() {
     state.loading = false;
     render();
   }
+}
+
+async function fetchLiveQuota() {
+  if (!state.connected || state.quotaLoading) return;
+  state.quotaLoading = true;
+  render();
+  try {
+    const result = await app.callServerTool({
+      name: 'get_live_quota',
+      arguments: {},
+    });
+    if (result?.structuredContent) {
+      state.quota = result.structuredContent;
+    } else if (result?.isError) {
+      state.quota = {
+        ok: false,
+        error: result.content?.[0]?.text || 'Failed to query live quota.',
+      };
+    }
+  } catch (err) {
+    state.quota = {
+      ok: false,
+      error: err?.message || 'Unable to run agy /usage check.',
+    };
+  } finally {
+    state.quotaLoading = false;
+    render();
+  }
+}
+
+function renderQuotaCard() {
+  const q = state.quota;
+  const checkedAt = q?.fetchedAt
+    ? new Date(q.fetchedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : '';
+
+  const btnClass = q?.ok ? 'btn-icon' : 'btn-primary';
+  const btnLabel = state.quotaLoading
+    ? 'Checking…'
+    : q?.ok
+      ? 'Refresh Quota'
+      : 'Check Live Quota';
+
+  const headerHtml = `
+    <div class="card-header" style="${q ? '' : 'margin-bottom:6px;'}">
+      <div>
+        <div class="card-title">Live Account Quota</div>
+        <div class="card-subtitle">${
+          q?.ok
+            ? `Checked at ${escapeHtml(checkedAt)} via official agy CLI (0 tokens used)`
+            : 'On-demand check via official local agy --print /usage --output-format json (0 tokens used)'
+        }</div>
+      </div>
+      <button id="checkQuotaBtn" class="${btnClass}" ${state.quotaLoading ? 'disabled' : ''}>
+        <svg class="${state.quotaLoading ? 'spin' : ''}" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/>
+        </svg>
+        ${btnLabel}
+      </button>
+    </div>
+  `;
+
+  if (!q) {
+    return `
+      <section class="card">
+        ${headerHtml}
+        <div class="quota-hint">
+          <span>Click <strong>Check Live Quota</strong> to fetch your current 5-hour and weekly model quota usage percentages locally via <code>agy --print /usage</code>.</span>
+        </div>
+      </section>
+    `;
+  }
+
+  if (!q.ok) {
+    return `
+      <section class="card">
+        ${headerHtml}
+        <div class="error-banner">
+          <strong>Quota check unavailable:</strong> ${escapeHtml(q.error || 'Unknown error')}
+          ${q.hint ? `<div style="margin-top:4px;opacity:0.9;">${escapeHtml(q.hint)}</div>` : ''}
+        </div>
+      </section>
+    `;
+  }
+
+  const groupsHtml = (q.groups || [])
+    .map((g) => {
+      const bucketsHtml = (g.buckets || [])
+        .map((b) => {
+          const winLabel =
+            b.window === '5h'
+              ? '5-Hour Window'
+              : b.window === 'weekly'
+                ? 'Weekly Limit'
+                : b.name || 'Quota';
+          const resetText = fmtResetCountdown(b.resetTime);
+          const resetTitle = b.resetTime ? new Date(b.resetTime).toLocaleString() : '';
+          return `
+            <div class="quota-bucket">
+              <div class="quota-bucket-top">
+                <span class="quota-window">${escapeHtml(winLabel)}</span>
+                <span class="quota-pct">
+                  <span class="badge ${quotaBadgeClass(b.usedPct)}">${b.usedPct}% used</span>
+                  <span style="margin-left:4px;">${b.remainingPct}% left</span>
+                </span>
+              </div>
+              <div class="track">
+                <div class="fill" style="width:${Math.max(b.usedPct > 0 ? 2 : 0, Math.min(100, b.usedPct))}%;background:${quotaFillColor(b.usedPct)}"></div>
+              </div>
+              <div class="quota-reset">
+                <span title="${escapeHtml(resetTitle)}">${escapeHtml(resetText)}</span>
+                <span>${b.remainingPct === 100 ? 'Full' : b.remainingPct === 0 ? 'Exhausted' : ''}</span>
+              </div>
+            </div>
+          `;
+        })
+        .join('');
+
+      return `
+        <div class="quota-group">
+          <div>
+            <div class="quota-group-name">${escapeHtml(g.name)}</div>
+            ${g.description ? `<div class="quota-group-desc">${escapeHtml(g.description)}</div>` : ''}
+          </div>
+          ${bucketsHtml}
+        </div>
+      `;
+    })
+    .join('');
+
+  return `
+    <section class="card">
+      ${headerHtml}
+      <div class="quota-grid">${groupsHtml}</div>
+    </section>
+  `;
 }
 
 function syncFiltersFromData(data) {
@@ -437,6 +605,8 @@ function render() {
 
     ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ''}
 
+    ${renderQuotaCard()}
+
     <section class="kpi-grid">
       <div class="card kpi-card">
         <div class="kpi-label">Total Tokens</div>
@@ -546,8 +716,8 @@ function render() {
     ${historyCardHtml}
 
     <footer class="footnote">
-      <span>100% local telemetry from Antigravity transcripts &amp; SQLite metadata — zero external calls.</span>
-      <span>For live account quota &amp; AI Credits remaining, open Settings → Models.</span>
+      <span>100% local telemetry from Antigravity transcripts &amp; SQLite metadata.</span>
+      <span>Live quota runs official <code>agy --print /usage</code> on demand (0 tokens).</span>
     </footer>
   `;
 
@@ -595,6 +765,11 @@ function bindEvents(data) {
   const refreshBtn = document.getElementById('refreshBtn');
   if (refreshBtn) {
     refreshBtn.addEventListener('click', () => fetchUsage());
+  }
+
+  const checkQuotaBtn = document.getElementById('checkQuotaBtn');
+  if (checkQuotaBtn) {
+    checkQuotaBtn.addEventListener('click', () => fetchLiveQuota());
   }
 
   const sortSel = document.getElementById('sortSelect');
@@ -674,6 +849,9 @@ app.ontoolinput = ({ arguments: args }) => {
 app.ontoolresult = (result) => {
   if (result?.structuredContent) {
     state.data = result.structuredContent;
+    if (state.data.quota && !state.quota) {
+      state.quota = state.data.quota;
+    }
     syncFiltersFromData(state.data);
     state.error = null;
   } else if (result?.isError) {

@@ -5,6 +5,7 @@ An **MCP App** plugin for **Google Antigravity** that renders a local usage anal
 ## Features
 
 - **Main Panel & Side Pane Entrypoints**: Uses Antigravity's official `com.google.antigravity/ui` MCP App entrypoints (`global` + `aux_pane`) with responsive layout and automatic light/dark theme syncing.
+- **On-Demand Live Account Quota %**: One-click **Check Live Quota** button runs the official local Antigravity CLI (`agy --print /usage --output-format json`, 0 tokens consumed) to show 5-hour and weekly used/remaining percentages and reset countdowns across all model groups.
 - **Token Breakdown**: Tracks total tokens across fresh input, KV-cache reads, and output tokens.
 - **KV-Cache Hit Rate**: Overall, per-model, and per-conversation prompt cache efficiency (`cache_read_tokens / (input_tokens + cache_read_tokens)`).
 - **Interactive Usage Over Time**: Stacked SVG chart (hourly for `24h`, daily for `7d` / `30d` / `All`) with hover tooltips and mode switching (**Token Split**, **By Model**, **Turns**).
@@ -46,13 +47,13 @@ Antigravity automatically discovers plugins in `~/.gemini/config/plugins/`.
 ## Requirements
 
 - **Node.js 18+** on your `PATH` (Node.js **22.5+** recommended to also read conversation titles and historical session counts from `conversation_summaries.db` via built-in `node:sqlite`).
+- **Antigravity CLI (`agy`)** *(optional)*: Required only if you use the on-demand **Check Live Quota** button (`agy --print /usage --output-format json`). All other local token/cache/conversation analytics work without it.
 
 ## Privacy & Security
 
-- **100% Local & Read-Only**: Only reads local files already on your machine (`~/.gemini/*/brain/*/.system_generated/logs/transcript.jsonl` and `~/.gemini/*/conversation_summaries.db` opened with `readOnly: true`).
-- **Zero Network Calls**: No external API requests, no reverse proxy, no auth tokens or credentials accessed, and no telemetry sent anywhere.
+- **100% Local & Read-Only Telemetry**: Reads local files already on your machine (`~/.gemini/*/brain/*/.system_generated/logs/transcript.jsonl` and `~/.gemini/*/conversation_summaries.db` opened with `readOnly: true`).
+- **Official CLI Only for Quota**: Clicking **Check Live Quota** invokes the official `agy --print /usage --output-format json` binary on demand (0 model tokens used, no background polling, no reverse proxy, no undocumented RPCs, and no credential scraping).
 - **Strict CSP Sandbox**: The UI is a single self-contained HTML file rendered under Antigravity's default `default-src 'none'` iframe policy.
-- **Account Quota Note**: Live plan quota percentages and AI Credits balances are not exposed through a public plugin API — view those natively in **Settings → Models** (or `/usage` in `agy` CLI).
 
 ## Development & Building from Source
 

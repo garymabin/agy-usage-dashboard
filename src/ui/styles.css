@@ -535,6 +535,119 @@ table.data-table tr:hover td {
   font-size: 12.5px;
 }
 
+/* Live Quota Card */
+button.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--accent);
+  color: #ffffff;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 11px;
+  cursor: pointer;
+  transition: opacity 0.12s, transform 0.08s;
+}
+
+button.btn-primary:hover {
+  opacity: 0.92;
+}
+
+button.btn-primary:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.quota-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 12px;
+}
+
+.quota-group {
+  background: var(--bg-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  padding: 12px 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.quota-group-name {
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--fg-1);
+}
+
+.quota-group-desc {
+  font-size: 11px;
+  color: var(--fg-3);
+  margin-top: 2px;
+  line-height: 1.35;
+}
+
+.quota-bucket {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.quota-bucket-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.quota-window {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 550;
+  color: var(--fg-2);
+}
+
+.quota-pct {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--fg-2);
+}
+
+.quota-pct strong {
+  color: var(--fg-1);
+}
+
+.quota-reset {
+  font-size: 11px;
+  color: var(--fg-3);
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.quota-hint {
+  font-size: 12px;
+  color: var(--fg-2);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.quota-hint code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--bg-3);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
 /* Responsive for side pane (aux_pane) */
 @media (max-width: 900px) {
   .kpi-grid {

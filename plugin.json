@@ -1,8 +1,8 @@
 {
   "name": "usage-dashboard",
   "displayName": "Usage Dashboard",
-  "description": "Local Antigravity usage analytics in the main panel and side pane: token consumption, KV-cache hit rate, model breakdown, daily trends, top tools, and per-conversation telemetry.",
-  "version": "1.0.0",
+  "description": "Local Antigravity usage analytics & on-demand live quota in the main panel and side pane: 5-hour/weekly quota %, token consumption, KV-cache hit rate, model breakdown, daily trends, top tools, and per-conversation telemetry.",
+  "version": "1.1.0",
   "author": {
     "name": "Bin Ma",
     "url": "https://github.com/garymabin"
