@@ -2,7 +2,7 @@
 
 An **MCP App** plugin for **Google Antigravity** that renders a local usage analytics dashboard directly in the **main panel** (full-page from **Plugins** in the left sidebar) and the **side pane** (`+` menu).
 
-![Antigravity Usage Dashboard Preview](./assets/preview.png)
+![Antigravity Usage Dashboard Preview](./assets/dashboard-preview.png)
 
 *Preview shown with synthetic demo data.*
 
