@@ -310,16 +310,17 @@ function renderChart(data, colorMap) {
   const plotH = height - padT - padB;
 
   const isTurns = state.chartMode === 'turns';
+  const isTps = state.chartMode === 'tps';
   const maxVal = Math.max(
     1,
-    ...timeline.map((b) => (isTurns ? b.turns : b.totalTokens)),
+    ...timeline.map((b) => (isTps ? (b.tps || 0) : isTurns ? b.turns : b.totalTokens)),
   );
 
   // Gridlines (4 levels)
   const gridLines = [0, 0.25, 0.5, 0.75, 1].map((frac) => {
     const y = padT + plotH * (1 - frac);
     const val = maxVal * frac;
-    const label = isTurns ? Math.round(val) : fmtTokens(val);
+    const label = isTps ? `${Math.round(val)}/s` : isTurns ? Math.round(val) : fmtTokens(val);
     return `
       <line x1="${padL}" y1="${y.toFixed(1)}" x2="${width - padR}" y2="${y.toFixed(1)}"
             stroke="var(--border-1)" stroke-dasharray="${frac === 0 ? '0' : '3 3'}" />
@@ -340,7 +341,14 @@ function renderChart(data, colorMap) {
     const x = cx - barW / 2;
     let segs = '';
 
-    if (isTurns) {
+    if (isTps) {
+      const val = b.tps || 0;
+      const h = (val / maxVal) * plotH;
+      const y = padT + plotH - h;
+      if (h > 0) {
+        segs += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(1.5, h).toFixed(1)}" rx="3" fill="var(--c-tps)" />`;
+      }
+    } else if (isTurns) {
       const h = (b.turns / maxVal) * plotH;
       const y = padT + plotH - h;
       if (h > 0) {
@@ -397,6 +405,8 @@ function renderChart(data, colorMap) {
     legendHtml = (data.models || []).slice(0, 6).map((m) => `
       <span class="legend-item"><span class="swatch" style="background:${colorMap.get(m.model) || '#3b82f6'}"></span>${escapeHtml(m.label)}</span>
     `).join('');
+  } else if (state.chartMode === 'tps') {
+    legendHtml = `<span class="legend-item"><span class="swatch" style="background:var(--c-tps)"></span>Effective Output Speed (tok/s across tool-calling turns)</span>`;
   } else {
     legendHtml = `<span class="legend-item"><span class="swatch" style="background:var(--accent)"></span>Model Turns</span>`;
   }
@@ -419,6 +429,8 @@ function getSortedConversations(convs) {
       return copy.sort((a, b) => b.totalTokens - a.totalTokens);
     case 'cache':
       return copy.sort((a, b) => b.cacheHitRate - a.cacheHitRate || b.totalTokens - a.totalTokens);
+    case 'tps':
+      return copy.sort((a, b) => (b.avgTps || -1) - (a.avgTps || -1) || b.totalTokens - a.totalTokens);
     case 'turns':
       return copy.sort((a, b) => b.turns - a.turns || b.totalTokens - a.totalTokens);
     case 'recent':
@@ -479,6 +491,7 @@ function render() {
                   <span class="swatch" style="background:${color}"></span>
                   ${escapeHtml(m.label)}
                   <span class="badge ${cacheBadgeClass(m.cacheHitRate)}">${m.cacheHitRate}% cache</span>
+                  ${m.avgTps != null ? `<span class="badge badge-tps" title="Weighted ${m.avgTps} tok/s · Median ${m.medianTps ?? m.avgTps} tok/s (${m.measuredTurns} turns)">${m.avgTps}/s</span>` : ''}
                 </span>
                 <span class="bar-stats">
                   <span>${m.turns} turns</span>
@@ -536,6 +549,7 @@ function render() {
             <td class="num">${fmtExact(c.turns)}</td>
             <td class="num" title="Fresh: ${fmtExact(c.freshInput)} | Cache: ${fmtExact(c.cacheRead)}">${fmtTokens(c.freshInput + c.cacheRead)}</td>
             <td class="num">${fmtTokens(c.output)}</td>
+            <td class="num">${c.avgTps != null ? `<span class="badge badge-tps" title="${c.measuredTurns} measured turns">${c.avgTps}/s</span>` : '<span style="color:var(--fg-3)">—</span>'}</td>
             <td class="num"><span class="badge ${cacheBadgeClass(c.cacheHitRate)}">${c.cacheHitRate}%</span></td>
             <td class="num"><strong>${fmtTokens(c.totalTokens)}</strong></td>
             <td class="num" title="${escapeHtml(c.lastActiveAt)}">${escapeHtml(fmtRelativeTime(c.lastActiveAt))}</td>
@@ -543,7 +557,7 @@ function render() {
         `,
         )
         .join('')
-    : `<tr><td colspan="8"><div class="empty-state"><p>No conversations match the current filters.</p><button class="btn-icon" id="resetFiltersBtn">Reset Filters</button></div></td></tr>`;
+    : `<tr><td colspan="9"><div class="empty-state"><p>No conversations match the current filters.</p><button class="btn-icon" id="resetFiltersBtn">Reset Filters</button></div></td></tr>`;
 
   const historyCardHtml = d.sessionHistory?.dbFound
     ? `
@@ -629,6 +643,15 @@ function render() {
       </div>
 
       <div class="card kpi-card">
+        <div class="kpi-label">
+          Throughput (TPS)
+          ${s.avgTps != null ? `<span class="badge badge-tps">${s.avgTps >= 120 ? 'Fast' : s.avgTps >= 60 ? 'Steady' : 'Warm'}</span>` : ''}
+        </div>
+        <div class="kpi-value" title="Effective end-to-end output tokens/sec across ${fmtExact(s.measuredTurns || 0)} tool-calling turns (includes prefill &amp; thinking)">${s.avgTps != null ? `${s.avgTps} tok/s` : '—'}</div>
+        <div class="kpi-meta">${s.avgTps != null ? `median ${s.medianTps}/s · avg ${s.avgTurnSec}s/turn` : 'No timed tool-calling turns yet'}</div>
+      </div>
+
+      <div class="card kpi-card">
         <div class="kpi-label">Output &amp; Turns</div>
         <div class="kpi-value">${fmtTokens(s.outputTokens)}</div>
         <div class="kpi-meta">${fmtExact(s.turns)} turns · avg ${fmtTokens(s.avgTokensPerTurn)}/turn · peak ${fmtTokens(s.peakContextTokens)} ctx</div>
@@ -651,6 +674,7 @@ function render() {
           <button data-chart-mode="split" class="${state.chartMode === 'split' ? 'active' : ''}">Token Split</button>
           <button data-chart-mode="model" class="${state.chartMode === 'model' ? 'active' : ''}">By Model</button>
           <button data-chart-mode="turns" class="${state.chartMode === 'turns' ? 'active' : ''}">Turns</button>
+          <button data-chart-mode="tps" class="${state.chartMode === 'tps' ? 'active' : ''}">TPS</button>
         </div>
       </div>
       ${renderChart(d, colorMap)}
@@ -689,6 +713,7 @@ function render() {
           <select id="sortSelect" class="ctrl-select" aria-label="Sort conversations">
             <option value="recent"${state.sortBy === 'recent' ? ' selected' : ''}>Sort: Recent</option>
             <option value="tokens"${state.sortBy === 'tokens' ? ' selected' : ''}>Sort: Most Tokens</option>
+            <option value="tps"${state.sortBy === 'tps' ? ' selected' : ''}>Sort: Fastest TPS</option>
             <option value="cache"${state.sortBy === 'cache' ? ' selected' : ''}>Sort: Best Cache %</option>
             <option value="turns"${state.sortBy === 'turns' ? ' selected' : ''}>Sort: Most Turns</option>
           </select>
@@ -703,6 +728,7 @@ function render() {
               <th class="num">Turns</th>
               <th class="num">Input</th>
               <th class="num">Output</th>
+              <th class="num">TPS</th>
               <th class="num">Cache %</th>
               <th class="num">Total</th>
               <th class="num">Active</th>
@@ -817,6 +843,7 @@ function bindEvents(data) {
         <div class="tooltip-row"><span>Fresh Input</span><strong>${fmtTokens(b.freshInput)}</strong></div>
         <div class="tooltip-row"><span>Output</span><strong>${fmtTokens(b.output)}</strong></div>
         <div class="tooltip-row"><span>Turns</span><strong>${fmtExact(b.turns)}</strong></div>
+        ${b.tps != null ? `<div class="tooltip-row"><span>Avg Speed</span><strong>${b.tps} tok/s</strong></div>` : ''}
       `;
       tooltip.classList.add('visible');
       positionTooltip(ev, tooltip);

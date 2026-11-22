@@ -2,7 +2,7 @@
 
 An **MCP App** plugin for **Google Antigravity** that renders a local usage analytics dashboard directly in the **main panel** (full-page from **Plugins** in the left sidebar) and the **side pane** (`+` menu).
 
-![Antigravity Usage Dashboard Preview](./assets/dashboard-preview.png)
+![Antigravity Usage Dashboard Preview](./assets/dashboard-preview-v1.2.png)
 
 *Preview shown with synthetic demo data.*
 
@@ -12,7 +12,8 @@ An **MCP App** plugin for **Google Antigravity** that renders a local usage anal
 - **On-Demand Live Account Quota %**: One-click **Check Live Quota** button runs the official local Antigravity CLI (`agy --print /usage --output-format json`, 0 tokens consumed) to show 5-hour and weekly used/remaining percentages and reset countdowns across all model groups.
 - **Token Breakdown**: Tracks total tokens across fresh input, KV-cache reads, and output tokens.
 - **KV-Cache Hit Rate**: Overall, per-model, and per-conversation prompt cache efficiency (`cache_read_tokens / (input_tokens + cache_read_tokens)`).
-- **Interactive Usage Over Time**: Stacked SVG chart (hourly for `24h`, daily for `7d` / `30d` / `All`) with hover tooltips and mode switching (**Token Split**, **By Model**, **Turns**).
+- **Throughput (TPS)**: Weighted and median effective end-to-end output tokens/sec across tool-calling turns (overall KPI card, daily/hourly `TPS` chart mode, per-model speed pills, and per-conversation TPS column & sort).
+- **Interactive Usage Over Time**: Stacked SVG chart (hourly for `24h`, daily for `7d` / `30d` / `All`) with hover tooltips and mode switching (**Token Split**, **By Model**, **Turns**, **TPS**).
 - **Model & Tool Breakdown**: Click any model to filter the dashboard; view most-invoked agent tools.
 - **Conversations Table**: Searchable and sortable per-conversation telemetry enriched with titles and workspace names from `conversation_summaries.db`.
 - **All-Time Session History**: Displays historical session and step counts by workspace (requires Node.js 22.5+ for built-in `node:sqlite`; gracefully skipped on Node 18/20).

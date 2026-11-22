@@ -12,6 +12,7 @@
   --c-cache: #10b981;
   --c-fresh: #3b82f6;
   --c-output: #8b5cf6;
+  --c-tps: #06b6d4;
   --c-warn: #f59e0b;
   --c-danger: #ef4444;
   --radius-sm: 6px;
@@ -193,7 +194,7 @@ button.btn-icon:disabled {
 /* KPI Grid */
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -264,9 +265,11 @@ button.btn-icon:disabled {
 .badge-good { background: rgba(16, 185, 129, 0.14); color: #10b981; }
 .badge-mid { background: rgba(245, 158, 11, 0.15); color: #d97706; }
 .badge-low { background: rgba(239, 68, 68, 0.14); color: #ef4444; }
+.badge-tps { background: rgba(6, 182, 212, 0.14); color: #0891b2; }
 .badge-neutral { background: var(--bg-3); color: var(--fg-2); font-weight: 500; }
 
 [data-theme="dark"] .badge-mid { color: #fbbf24; }
+[data-theme="dark"] .badge-tps { color: #22d3ee; }
 
 /* Section headers */
 .card-header {
@@ -649,6 +652,12 @@ button.btn-primary:disabled {
 }
 
 /* Responsive for side pane (aux_pane) */
+@media (max-width: 1080px) {
+  .kpi-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 900px) {
   .kpi-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

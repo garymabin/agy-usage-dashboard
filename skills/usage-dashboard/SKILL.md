@@ -1,6 +1,6 @@
 ---
 name: usage-dashboard
-description: Inspect local Antigravity token usage, KV-cache hit rates, model breakdown, daily trends, top tools, and conversation activity using the Usage Dashboard MCP App.
+description: Inspect local Antigravity token usage, KV-cache hit rates, throughput (TPS), live quota %, model breakdown, daily trends, top tools, and conversation activity using the Usage Dashboard MCP App.
 ---
 
 # Usage Dashboard

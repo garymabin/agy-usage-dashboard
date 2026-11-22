@@ -14646,7 +14646,8 @@ function parseTranscriptFile(filePath, convId) {
   }
   const turns = [];
   const lines = raw.split(/\r?\n/);
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     if (!line || !line.includes("PLANNER_RESPONSE")) continue;
     let obj;
     try {
@@ -14671,6 +14672,32 @@ function parseTranscriptFile(filePath, convId) {
         }
       }
     }
+    let durationSec = null;
+    let tps = null;
+    if (output > 0 && tools.length > 0 && obj.created_at) {
+      for (let j = i + 1; j < lines.length; j++) {
+        const nextLine = lines[j];
+        if (!nextLine) continue;
+        try {
+          const nextObj = JSON.parse(nextLine);
+          if (nextObj.type !== "USER_INPUT" && nextObj.created_at) {
+            const nextMs = Date.parse(nextObj.created_at);
+            if (!Number.isNaN(nextMs)) {
+              const dt = (nextMs - tsMs) / 1e3;
+              if (dt >= 1 && dt <= 300) {
+                const candidateTps = output / dt;
+                if (candidateTps <= 1500) {
+                  durationSec = dt;
+                  tps = candidateTps;
+                }
+              }
+            }
+          }
+        } catch {
+        }
+        break;
+      }
+    }
     turns.push({
       convId,
       stepIndex: Number(obj.step_index) || 0,
@@ -14681,7 +14708,9 @@ function parseTranscriptFile(filePath, convId) {
       totalInput,
       output,
       totalTokens,
-      tools
+      tools,
+      durationSec,
+      tps
     });
   }
   transcriptCache.set(filePath, {
@@ -14808,6 +14837,9 @@ async function collectUsageAnalytics(options = {}) {
   let outputTokens = 0;
   let toolCallsCount = 0;
   let peakContextTokens = 0;
+  let measuredOutputTokens = 0;
+  let measuredDurationSec = 0;
+  const allTpsSamples = [];
   const modelMap = /* @__PURE__ */ new Map();
   const toolMap = /* @__PURE__ */ new Map();
   const convMap = /* @__PURE__ */ new Map();
@@ -14819,6 +14851,11 @@ async function collectUsageAnalytics(options = {}) {
     outputTokens += t.output;
     toolCallsCount += t.tools.length;
     if (t.totalInput > peakContextTokens) peakContextTokens = t.totalInput;
+    if (t.durationSec != null && t.tps != null) {
+      measuredOutputTokens += t.output;
+      measuredDurationSec += t.durationSec;
+      allTpsSamples.push(t.tps);
+    }
     let mAgg = modelMap.get(t.model);
     if (!mAgg) {
       mAgg = {
@@ -14830,7 +14867,10 @@ async function collectUsageAnalytics(options = {}) {
         cacheRead: 0,
         totalInput: 0,
         output: 0,
-        totalTokens: 0
+        totalTokens: 0,
+        measuredOut: 0,
+        measuredSec: 0,
+        tpsSamples: []
       };
       modelMap.set(t.model, mAgg);
     }
@@ -14840,6 +14880,11 @@ async function collectUsageAnalytics(options = {}) {
     mAgg.totalInput += t.totalInput;
     mAgg.output += t.output;
     mAgg.totalTokens += t.totalTokens;
+    if (t.durationSec != null && t.tps != null) {
+      mAgg.measuredOut += t.output;
+      mAgg.measuredSec += t.durationSec;
+      mAgg.tpsSamples.push(t.tps);
+    }
     for (const toolName of t.tools) {
       toolMap.set(toolName, (toolMap.get(toolName) || 0) + 1);
     }
@@ -14860,6 +14905,9 @@ async function collectUsageAnalytics(options = {}) {
         totalTokens: 0,
         peakContext: 0,
         lastActiveMs: 0,
+        measuredOut: 0,
+        measuredSec: 0,
+        measuredTurns: 0,
         modelTokens: /* @__PURE__ */ new Map()
       };
       convMap.set(t.convId, cAgg);
@@ -14873,6 +14921,11 @@ async function collectUsageAnalytics(options = {}) {
     cAgg.totalTokens += t.totalTokens;
     if (t.totalInput > cAgg.peakContext) cAgg.peakContext = t.totalInput;
     if (t.tsMs > cAgg.lastActiveMs) cAgg.lastActiveMs = t.tsMs;
+    if (t.durationSec != null && t.tps != null) {
+      cAgg.measuredOut += t.output;
+      cAgg.measuredSec += t.durationSec;
+      cAgg.measuredTurns += 1;
+    }
     cAgg.modelTokens.set(t.model, (cAgg.modelTokens.get(t.model) || 0) + t.totalTokens);
     const bucketKey = useHourly ? toLocalHourKey(t.tsMs) : toLocalDateKey(t.tsMs);
     let bAgg = bucketMap.get(bucketKey);
@@ -14885,6 +14938,9 @@ async function collectUsageAnalytics(options = {}) {
         cacheRead: 0,
         output: 0,
         turns: 0,
+        measuredOut: 0,
+        measuredSec: 0,
+        measuredTurns: 0,
         byModel: {}
       };
       bucketMap.set(bucketKey, bAgg);
@@ -14894,15 +14950,33 @@ async function collectUsageAnalytics(options = {}) {
     bAgg.cacheRead += t.cacheRead;
     bAgg.output += t.output;
     bAgg.turns += 1;
+    if (t.durationSec != null && t.tps != null) {
+      bAgg.measuredOut += t.output;
+      bAgg.measuredSec += t.durationSec;
+      bAgg.measuredTurns += 1;
+    }
     bAgg.byModel[t.model] = (bAgg.byModel[t.model] || 0) + t.totalTokens;
   }
+  const finalizeBucket = (b) => ({
+    bucket: b.bucket,
+    label: b.label,
+    totalTokens: b.totalTokens,
+    freshInput: b.freshInput,
+    cacheRead: b.cacheRead,
+    output: b.output,
+    turns: b.turns,
+    tps: b.measuredSec > 0 ? Math.round(b.measuredOut / b.measuredSec * 10) / 10 : null,
+    measuredTurns: b.measuredTurns || 0,
+    byModel: b.byModel
+  });
   const timeline = [];
   if (rawRange === "24h") {
     for (let i = 23; i >= 0; i--) {
       const ms = nowMs - i * 3600 * 1e3;
       const key = toLocalHourKey(ms);
+      const b = bucketMap.get(key);
       timeline.push(
-        bucketMap.get(key) || {
+        b ? finalizeBucket(b) : {
           bucket: key,
           label: key.slice(11, 16),
           totalTokens: 0,
@@ -14910,6 +14984,8 @@ async function collectUsageAnalytics(options = {}) {
           cacheRead: 0,
           output: 0,
           turns: 0,
+          tps: null,
+          measuredTurns: 0,
           byModel: {}
         }
       );
@@ -14919,8 +14995,9 @@ async function collectUsageAnalytics(options = {}) {
     for (let i = days - 1; i >= 0; i--) {
       const ms = nowMs - i * 24 * 3600 * 1e3;
       const key = toLocalDateKey(ms);
+      const b = bucketMap.get(key);
       timeline.push(
-        bucketMap.get(key) || {
+        b ? finalizeBucket(b) : {
           bucket: key,
           label: formatDayLabel(key),
           totalTokens: 0,
@@ -14928,6 +15005,8 @@ async function collectUsageAnalytics(options = {}) {
           cacheRead: 0,
           output: 0,
           turns: 0,
+          tps: null,
+          measuredTurns: 0,
           byModel: {}
         }
       );
@@ -14935,16 +15014,37 @@ async function collectUsageAnalytics(options = {}) {
   } else {
     const sortedKeys = [...bucketMap.keys()].sort();
     for (const k of sortedKeys) {
-      timeline.push(bucketMap.get(k));
+      timeline.push(finalizeBucket(bucketMap.get(k)));
     }
   }
+  const calcMedian = (arr) => {
+    if (!arr.length) return null;
+    const sorted = [...arr].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const val = sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    return Math.round(val * 10) / 10;
+  };
   const totalInputTokens = freshInputTokens + cacheReadTokens;
   const totalTokens = totalInputTokens + outputTokens;
   const cacheHitRate = totalInputTokens > 0 ? Math.round(cacheReadTokens / totalInputTokens * 1e3) / 10 : 0;
+  const avgTps = measuredDurationSec > 0 ? Math.round(measuredOutputTokens / measuredDurationSec * 10) / 10 : null;
+  const medianTps = calcMedian(allTpsSamples);
+  const avgTurnSec = allTpsSamples.length > 0 ? Math.round(measuredDurationSec / allTpsSamples.length * 10) / 10 : null;
   const models = [...modelMap.values()].sort((a, b) => b.totalTokens - a.totalTokens).map((m) => ({
-    ...m,
+    model: m.model,
+    label: m.label,
+    family: m.family,
+    turns: m.turns,
+    freshInput: m.freshInput,
+    cacheRead: m.cacheRead,
+    totalInput: m.totalInput,
+    output: m.output,
+    totalTokens: m.totalTokens,
     cacheHitRate: m.totalInput > 0 ? Math.round(m.cacheRead / m.totalInput * 1e3) / 10 : 0,
-    sharePct: totalTokens > 0 ? Math.round(m.totalTokens / totalTokens * 1e3) / 10 : 0
+    sharePct: totalTokens > 0 ? Math.round(m.totalTokens / totalTokens * 1e3) / 10 : 0,
+    avgTps: m.measuredSec > 0 ? Math.round(m.measuredOut / m.measuredSec * 10) / 10 : null,
+    medianTps: calcMedian(m.tpsSamples),
+    measuredTurns: m.tpsSamples.length
   }));
   const tools = [...toolMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 16).map(([name, count]) => ({
     name,
@@ -14970,6 +15070,8 @@ async function collectUsageAnalytics(options = {}) {
       totalTokens: c.totalTokens,
       peakContext: c.peakContext,
       cacheHitRate: c.totalInput > 0 ? Math.round(c.cacheRead / c.totalInput * 1e3) / 10 : 0,
+      avgTps: c.measuredSec > 0 ? Math.round(c.measuredOut / c.measuredSec * 10) / 10 : null,
+      measuredTurns: c.measuredTurns,
       lastActiveAt: c.lastActiveMs ? new Date(c.lastActiveMs).toISOString() : "",
       lastActiveMs: c.lastActiveMs
     };
@@ -15017,7 +15119,11 @@ async function collectUsageAnalytics(options = {}) {
       totalDbConversations: summariesById.size,
       totalDbSteps,
       avgTokensPerTurn: filteredTurns.length > 0 ? Math.round(totalTokens / filteredTurns.length) : 0,
-      peakContextTokens
+      peakContextTokens,
+      avgTps,
+      medianTps,
+      avgTurnSec,
+      measuredTurns: allTpsSamples.length
     },
     timeline,
     models,
@@ -15049,13 +15155,19 @@ function formatUsageTextSummary(data) {
   const lines = [
     `Antigravity Usage Summary (${data.filters.range}):`,
     `- Total Tokens: ${fmt(s.totalTokens)} (${fmt(s.freshInputTokens)} fresh input + ${fmt(s.cacheReadTokens)} cache read + ${fmt(s.outputTokens)} output)`,
-    `- KV-Cache Hit Rate: ${s.cacheHitRate}%`,
-    `- Model Turns: ${s.turns} | Tool Calls: ${s.toolCalls} | Conversations with Token Telemetry: ${s.telemetryConversations}`
+    `- KV-Cache Hit Rate: ${s.cacheHitRate}%`
   ];
+  if (s.avgTps != null) {
+    lines.push(
+      `- Effective Output Speed (TPS): ${s.avgTps} tok/s weighted (${s.medianTps} tok/s median, avg ${s.avgTurnSec}s/turn across ${s.measuredTurns} tool-calling turns)`
+    );
+  }
+  lines.push(`- Model Turns: ${s.turns} | Tool Calls: ${s.toolCalls} | Conversations with Token Telemetry: ${s.telemetryConversations}`);
   if (data.models.length > 0) {
     lines.push("- Top Models:");
     for (const m of data.models.slice(0, 5)) {
-      lines.push(`  * ${m.label}: ${fmt(m.totalTokens)} tokens (${m.sharePct}%, ${m.turns} turns, ${m.cacheHitRate}% cache hit)`);
+      const tpsPart = m.avgTps != null ? `, ${m.avgTps} tok/s` : "";
+      lines.push(`  * ${m.label}: ${fmt(m.totalTokens)} tokens (${m.sharePct}%, ${m.turns} turns, ${m.cacheHitRate}% cache hit${tpsPart})`);
     }
   }
   if (data.sessionHistory.dbFound) {
@@ -15081,7 +15193,7 @@ function resolveAppHtmlPath() {
 var server = new Server(
   {
     name: "agy-usage-dashboard",
-    version: "1.1.0"
+    version: "1.2.0"
   },
   {
     capabilities: {
